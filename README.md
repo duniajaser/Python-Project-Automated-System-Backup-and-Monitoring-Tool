@@ -29,10 +29,3 @@ This repository contains a suite of tools developed in Python for automating sys
    - Allows users to view logs and generated reports.
    - Includes help features to guide users on how to use the tool.
 
-## Installation
-
-Clone the repository to your local machine:
-
-```bash
-git clone https://github.com/duniajaser/Python-Project-Automated-System-Backup-and-Monitoring-Tool.git
-cd Python-Project-Automated-System-Backup-and-Monitoring-Tool
