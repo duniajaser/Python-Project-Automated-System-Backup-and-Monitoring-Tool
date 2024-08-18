@@ -241,8 +241,8 @@ def schedule_backup(args):
 
     # Handle 'frequency' backup type
     elif args.backup == 'frequency':
-        if not args.d or not args.e or not args.t:
-            print("Error: Start date, end date, and number of executions must be provided for frequency type backup.")
+        if not args.e or not args.t:
+            print("Error: End date, and number of executions must be provided for frequency type backup.")
             sys.exit(1)
 
         start_date = validate_date(args.d)
@@ -254,21 +254,28 @@ def schedule_backup(args):
         # Calculate the total duration in hours and the interval between each execution
         total_duration = (end_date - start_date).total_seconds() / 3600
         interval_minutes = max(1, int(total_duration * 60 / (args.t - 1)))  # Ensure at least 1 minute
-
         formatted_interval = format_time(interval_minutes)
 
-
-        # Prepare and set the cron job
+        # Prepare the cron job command
         cron_command = f"*/{interval_minutes} * * * * /usr/bin/python3 {BACKUP_SCRIPT} {args.p}"
-        subprocess.run(f'(crontab -l 2>/dev/null; echo "{cron_command}") | crontab -', shell=True)
 
-        # Schedule the removal of the cron job
+        if args.d:
+            # Schedule the cron job to start at the start date using 'at'
+            formatted_start_date = start_date.strftime('%Y%m%d%H%M')
+            subprocess.run(f'echo "{cron_command}" | at -t {formatted_start_date} 2>/dev/null', shell=True, check=True)
+            print(f"Backup scheduled to start at {args.d} and run every {formatted_interval}.")
+        else:
+            # Immediate scheduling
+            subprocess.run(f'(crontab -l 2>/dev/null; echo "{cron_command}") | crontab -', shell=True)
+            print(f"Backup started immediately, running every {formatted_interval}.")
+
+        # Schedule the removal of the cron job at the end date
         end_at_time = end_date.strftime('%H:%M %m/%d/%Y')
         remove_command = f'crontab -l | grep -v "{cron_command}" | crontab -'
         subprocess.run(f'echo "{remove_command}" | at {end_at_time} 2>/dev/null', shell=True, check=True)
+        print(f"Backup will end at {end_date}.")
 
-        print(f"Backup will start at {start_date} and run every {formatted_interval} until {end_date}.")
-
+#--------------------------------------------------------------------------------------------------------------------------
 
 def format_time(interval_minutes):
     """ Formats time from minutes to hours and minutes if more than one hour. """
