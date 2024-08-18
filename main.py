@@ -247,36 +247,39 @@ def schedule_backup(args):
 
         start_date = validate_date(args.d)
         end_date = validate_date(args.e)
-
         if end_date <= start_date:
             print("Error: End date must be after the start date.")
             sys.exit(1)
 
-        # Calculate total duration in hours between start and end dates
-        start_seconds = int(start_date.timestamp())
-        end_seconds = int(end_date.timestamp())
-        total_duration = (end_seconds - start_seconds) // 3600
+        # Calculate the total duration in hours and the interval between each execution
+        total_duration = (end_date - start_date).total_seconds() / 3600
+        interval_minutes = max(1, int(total_duration * 60 / (args.t - 1)))  # Ensure at least 1 minute
 
-        if args.t <= 0:
-            print("Error: Number of executions must be greater than 0.")
-            sys.exit(1)
+        formatted_interval = format_time(interval_minutes)
 
-        # Calculate the interval between executions
-        if args.t > 1:
-            interval_hours = total_duration // (args.t - 1)
+
+        # Prepare and set the cron job
+        cron_command = f"*/{interval_minutes} * * * * /usr/bin/python3 {BACKUP_SCRIPT} {args.p}"
+        subprocess.run(f'(crontab -l 2>/dev/null; echo "{cron_command}") | crontab -', shell=True)
+
+        # Schedule the removal of the cron job
+        end_at_time = end_date.strftime('%H:%M %m/%d/%Y')
+        remove_command = f'crontab -l | grep -v "{cron_command}" | crontab -'
+        subprocess.run(f'echo "{remove_command}" | at {end_at_time} 2>/dev/null', shell=True, check=True)
+
+        print(f"Backup will start at {start_date} and run every {formatted_interval} until {end_date}.")
+
+
+def format_time(interval_minutes):
+    """ Formats time from minutes to hours and minutes if more than one hour. """
+    if interval_minutes >= 60:
+        hours = interval_minutes // 60
+        minutes = interval_minutes % 60
+        if minutes > 0:
+            return f"{hours} hours and {minutes} minutes"
         else:
-            interval_hours = total_duration
-
-        # Set up the cron job to execute at the calculated frequency
-        cron_command = f"0 {args.t} * * * /usr/bin/python3 {BACKUP_SCRIPT} {backup_path}"
-
-        for i in range(args.t):
-            next_time = start_date + timedelta(hours=i * interval_hours)
-            formatted_next_time = next_time.strftime('%H:%M %m/%d/%Y')
-            subprocess.run(f'echo "{cron_command}" | at {formatted_next_time}', shell=True, stderr=subprocess.DEVNULL)
-
-        print(f"Backup will execute {args.t} times, starting at {args.d}, every {interval_hours} hours until {args.e}.")
-
+            return f"{hours} hours"
+    return f"{interval_minutes} minutes"
 
 #--------------------------------------------------------------------------------------------------------------------------
 
@@ -308,6 +311,10 @@ def stop_monitoring():
         if MONITOR_SCRIPT in job.command:
             cron.remove(job)
             jobs_removed += 1
+        if REPORT_SCRIPT in job.command:
+            cron.remove(job)
+            jobs_removed += 1
+
 
     # Write the changes back to the crontab
     if jobs_removed > 0:
