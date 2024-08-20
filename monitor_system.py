@@ -7,19 +7,26 @@ import subprocess
 import psutil
 
 
+# Get the current directory where the script is located
+current_directory = os.path.dirname(os.path.abspath(__file__))
+
 # Constants
 CPU_THRESHOLD = 80
 MEM_THRESHOLD = 90
 DISK_THRESHOLD = 85
-LOG_FILE = os.path.expanduser("~/Desktop/python_project1/system_logs/system_monitor.log")
-ALERT_EMAIL = sys.argv[1] if len(sys.argv) > 1 else None
 
-# Ensure the log directory exists
-LOG_DIR = os.path.dirname(LOG_FILE)
-os.makedirs(LOG_DIR, exist_ok=True)
+# Define log directory and file paths
+LOG_DIR = os.path.join(current_directory, "system_logs")
+LOG_FILE = os.path.join(LOG_DIR, "system_monitor.log")
 CPU_ALERT_TIME_FILE = os.path.join(LOG_DIR, "cpu_alert_time.log")
 MEM_ALERT_TIME_FILE = os.path.join(LOG_DIR, "mem_alert_time.log")
 DISK_ALERT_TIME_FILE = os.path.join(LOG_DIR, "disk_alert_time.log")
+
+# Get alert email from command-line arguments
+ALERT_EMAIL = sys.argv[1] if len(sys.argv) > 1 else None
+
+# Ensure the log directory exists
+os.makedirs(LOG_DIR, exist_ok=True)
 
 # Logging function
 def log(message, type="Information"):
@@ -36,7 +43,7 @@ def log(message, type="Information"):
 
 
 # Function to send alerts
-def send_alert_if_needed(last_alert_time_file, current_usage, alert_threshold, usage_type):
+def send_alert_if_needed(last_alert_time_file, current_usage, alert_threshold, usage_type, email):
     current_time = int(time.time())
     try:
         with open(last_alert_time_file, "r") as file:
@@ -50,7 +57,7 @@ def send_alert_if_needed(last_alert_time_file, current_usage, alert_threshold, u
         if current_usage > alert_threshold:
             alert_message = f"{usage_type} usage is above normal threshold at {current_usage}%"
             log(alert_message, type="Warning")
-            send_email(ALERT_EMAIL, f"High {usage_type} Usage Alert", alert_message)
+            send_email(email, f"High {usage_type} Usage Alert", alert_message)
             with open(last_alert_time_file, "w") as file:
                 file.write(str(current_time))
 
@@ -63,22 +70,22 @@ def send_email(to_address, subject, body):
         proc.communicate(message.encode())
 
 # Function to check system status
-def check_system():
+def check_system(email):
     # CPU Usage
     cpu_usage = psutil.cpu_percent(interval=1)
     if cpu_usage > CPU_THRESHOLD:
-        send_alert_if_needed(CPU_ALERT_TIME_FILE, cpu_usage, CPU_THRESHOLD, "CPU")
+        send_alert_if_needed(CPU_ALERT_TIME_FILE, cpu_usage, CPU_THRESHOLD, "CPU", email)
     
     # Memory Usage
     memory_info = psutil.virtual_memory()
     mem_usage = memory_info.percent    
     if mem_usage > MEM_THRESHOLD:
-        send_alert_if_needed(MEM_ALERT_TIME_FILE, mem_usage, MEM_THRESHOLD, "Memory")
+        send_alert_if_needed(MEM_ALERT_TIME_FILE, mem_usage, MEM_THRESHOLD, "Memory", email)
     
     # Disk Usage
     disk_usage = psutil.disk_usage('/').percent
     if disk_usage > DISK_THRESHOLD:
-        send_alert_if_needed(DISK_ALERT_TIME_FILE, disk_usage, DISK_THRESHOLD, "Disk")
+        send_alert_if_needed(DISK_ALERT_TIME_FILE, disk_usage, DISK_THRESHOLD, "Disk", email)
     
     # Network Activity
     net_io = psutil.net_io_counters()
@@ -100,4 +107,4 @@ if __name__ == "__main__":
         print("Error: No email address provided.")
         print("Usage: <script> <email-address>")
         sys.exit(1)
-    check_system()
+    check_system(ALERT_EMAIL)

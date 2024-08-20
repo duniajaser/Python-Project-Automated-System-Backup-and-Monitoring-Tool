@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-from datetime import datetime, timedelta
+from datetime import datetime
 import os
 import sys
 import argparse
 import re
 import subprocess
 from crontab import CronTab
+from apscheduler.schedulers.blocking import BlockingScheduler
+from monitor_system import check_system
+from generate_report import generate_report
 
 #--------------------------------------------------------------------------------------------------------------------------
 
@@ -86,36 +89,6 @@ def generate_report():
 
 #--------------------------------------------------------------------------------------------------------------------------
 
-def schedule_cron_job(start_date, end_date, args):
-    cron_command = f'python3 {MONITOR_SCRIPT} {args.start_monitoring}'
-    
-    # Set up the cron job to run every 3 minutes
-    cron_entry = f"*/3 * * * * {cron_command}"
-    
-    if start_date:
-        formatted_start_date = start_date.strftime('%Y%m%d%H%M')
-        
-        # Schedule the initial execution with 'at'
-        subprocess.run(f'echo "{cron_command}" | at -t {formatted_start_date}', shell=True, stderr=subprocess.DEVNULL)
-        print(f"Monitoring scheduled to start at {start_date.strftime('%Y-%m-%d %H:%M')}.")
-        
-        # Schedule the cron job to start right after the initial 'at' job
-        at_time = start_date.strftime('%H:%M %m/%d/%Y')
-        subprocess.run(f'(crontab -l 2>/dev/null; echo "{cron_entry}") | crontab -', shell=True)
-        print("Repeating monitoring every 3 minutes after initial start.")
-    else:
-        # Immediate start without a specific start date
-        subprocess.run(f'(crontab -l 2>/dev/null; echo "{cron_entry}") | crontab -', shell=True)
-        print("Monitoring started immediately, repeating every 3 minutes.")
-
-    if end_date:
-        formatted_end_date = end_date.strftime('%Y%m%d%H%M')
-        remove_command = f'crontab -l | grep -v "{cron_entry}" | crontab -'
-        subprocess.run(f'echo "{remove_command}" | at -t {formatted_end_date}', shell=True, stderr=subprocess.DEVNULL)
-        print(f"Monitoring scheduled to end at {end_date.strftime('%Y-%m-%d %H:%M')}.")
-
-#--------------------------------------------------------------------------------------------------------------------------
-
 def start_monitoring(args):
     """Start monitoring with email notifications."""
     validate_email(args.start_monitoring)
@@ -135,44 +108,24 @@ def start_monitoring(args):
     else:
         date_message = "with no specific start or end date"
 
-  #  print(f"Monitoring {date_message} with alerts to: {args.start_monitoring}")
-
-    # Schedule the cron job
-    schedule_cron_job(start_date, end_date, args)
-
-    # periodic schdule
-    schdule_periodic_report()
-
-#--------------------------------------------------------------------------------------------------------------------------
-
-def schdule_periodic_report():
-    # Define the cron job command to run daily at 6 PM
-    cron_command = f'0 18 * * * /usr/bin/python3 {REPORT_SCRIPT}'
+    print(f"Monitoring {date_message} with alerts to: {args.start_monitoring}")
+    scheduler = BlockingScheduler()
     
-    # Create a temporary file to store the new crontab
-    temp_cron_file = '/tmp/temp_cron_file'
+    #monitoring process every 3 minutes from start to end date and time
+    scheduler.add_job(lambda: check_system(args.start_monitoring), 'interval', minutes=3, next_run_time=start_date, end_date=end_date)
+    
+    # reporting job to execute every day at 6:00 PM
+    scheduler.add_job(generate_report, 'cron', hour=18, minute=0)
+
     try:
-        # Get the current crontab
-        result = subprocess.run(['crontab', '-l'], capture_output=True, text=True)
-        if result.returncode == 0:
-            current_crontab = result.stdout
-        else:
-            current_crontab = ""
-        
-        # Add the new cron job
-        with open(temp_cron_file, 'w') as file:
-            file.write(current_crontab)
-            file.write(cron_command + '\n')
-        
-        # Install the new crontab
-        subprocess.run(['crontab', temp_cron_file], check=True)
-        # print(f"Cron job scheduled: {cron_command}")
-        
-    except subprocess.CalledProcessError as e:
-        print(f"Error scheduling cron job: {e}")
+        scheduler.start()
+    except (KeyboardInterrupt, SystemExit):
+        print("Monitoring interrupted by user.")
     finally:
-        if os.path.exists(temp_cron_file):
-            os.remove(temp_cron_file)
+        scheduler.shutdown()
+        print("Monitoring stopped.")
+
+
 
 #--------------------------------------------------------------------------------------------------------------------------
 
@@ -307,31 +260,6 @@ def perform_backup(path):
 
 #--------------------------------------------------------------------------------------------------------------------------
 
-def stop_monitoring():
-    """Stop system monitoring by removing the cron job associated with the monitor script."""
-    # Access the current user's crontab
-    cron = CronTab(user=True)
-    jobs_removed = 0
-
-    # Iterate through the jobs and remove those matching the monitoring script
-    for job in cron:
-        if MONITOR_SCRIPT in job.command:
-            cron.remove(job)
-            jobs_removed += 1
-        if REPORT_SCRIPT in job.command:
-            cron.remove(job)
-            jobs_removed += 1
-
-
-    # Write the changes back to the crontab
-    if jobs_removed > 0:
-        cron.write()
-        print(f"Monitoring stopped. {jobs_removed} jobs removed.")
-    else:
-        print("No active monitoring job found.")
-
-#--------------------------------------------------------------------------------------------------------------------------
-
 def main():
     parser, args = help_maker()
     if len(sys.argv) == 1:  # No arguments provided
@@ -363,9 +291,10 @@ def main():
         schedule_backup(args)
 
     if getattr(args, 'stop_monitoring', False):
-        stop_monitoring()
+        """the system monitoring reporting operation is alread stopped from the run.sh script."""
 
     if getattr(args, 'start_monitoring', None):
+        # done
         start_monitoring(args)
 
     sys.exit(0)
@@ -386,23 +315,23 @@ def help_maker():
         description="Automated Backup System and Monitoring Tool",
         formatter_class=argparse.RawTextHelpFormatter
     )
-    parser.add_argument('-b', '--backup', type=str, choices=['periodic', 'frequency'], metavar='TYPE',
+    parser.add_argument('-b', '--backup', type=str, choices=['periodic', 'frequency'], metavar='<TYPE>', 
                         help=('Schedule a backup. Requires -p, -t, and optionally -d and -e.\n'
                               'Examples:\n'
                               '  -b periodic -t 6 -p /path/to/backup  # t represents hours between backups\n'
                               '  -b frequency -t 24 -p /path/to/backup -d "2024-01-01 12:00" -e "2024-01-02 12:00"'))
-    parser.add_argument('-d', metavar='DATE', type=str, help='Start date and time in YYYY-MM-DD HH:MM format, required for frequency type.')
-    parser.add_argument('-e', metavar='DATE', type=str, help='End date and time in YYYY-MM-DD HH:MM format, required for frequency type.')
-    parser.add_argument('-t', metavar='TIMES_OR_HOURS', type=int, help='Specify the interval or frequency of backups: Number of hours or number of backups.')
-    parser.add_argument('-p', metavar='PATH', type=str, help='Path where the directory for the backup process.')
-    parser.add_argument('-u', '--unschedule', metavar='PATH', type=str, help='Unschedule a previously scheduled backup given the directory.')
-    parser.add_argument('-s', '--start-monitoring', metavar='EMAIL', type=str,
+    parser.add_argument('-d', metavar='<DATE>', type=str, help='Start date and time in YYYY-MM-DD HH:MM format, required for frequency type.')
+    parser.add_argument('-e', metavar='<DATE>', type=str, help='End date and time in YYYY-MM-DD HH:MM format, required for frequency type.')
+    parser.add_argument('-t', metavar='<TIMES_OR_HOURS>', type=int, help='Specify the interval or frequency of backups: Number of hours or number of backups.')
+    parser.add_argument('-p', metavar='<PATH>', type=str, help='Path where the directory for the backup process.')
+    parser.add_argument('-u', '--unschedule', metavar='<PATH>', type=str, help='Unschedule a previously scheduled backup given the directory.')
+    parser.add_argument('-s', '--start-monitoring', metavar='<EMAIL>', type=str,
                         help=('Start system monitoring with email alerts. Optional -d and -e for monitoring duration.\n'
                               'Example: -s user@example.com -d "2024-01-01 12:00" -e "2024-01-02 12:00"'))
     parser.add_argument('-k', '--stop-monitoring', action='store_true', help='Stop system monitoring and remove its process.')
     parser.add_argument('-l', '--logs', action='store_true', help='Display the contents of the system log file.')
     parser.add_argument('-r', '--report', action='store_true', help='Display a performance report from the system log.')
-    parser.add_argument('-j', '--backup-now', metavar='PATH', type=str, help='Perform an immediate backup to the specified path.')
+    parser.add_argument('-j', '--backup-now', metavar='<PATH>', type=str, help='Perform an immediate backup to the specified path.')
 
     return parser, parser.parse_args()
 
