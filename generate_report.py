@@ -107,6 +107,3 @@ def generate_report():
 # Create or verify log files silently
 create_log_file_silently(LOG_FILE)
 create_log_file_silently(LOG_FILE_MONITOR)
-
-# Generate the report
-generate_report()
