@@ -4,8 +4,6 @@ import os
 import sys
 import argparse
 import re
-import subprocess
-from crontab import CronTab
 from apscheduler.schedulers.blocking import BlockingScheduler
 from monitor_system import check_system
 from generate_report import generate_report
