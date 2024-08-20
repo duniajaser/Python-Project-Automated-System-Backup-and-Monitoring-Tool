@@ -4,11 +4,11 @@ This repository contains a suite of tools developed in Python for automating sys
 
 ## Project Structure
 
-- `main.py`: Central script that orchestrates backup and monitoring functionalities.
-- `monitor_system.py`: Script for monitoring system metrics such as CPU, memory, disk usage, and network activity.
-- `process_backup.py`: Manages the creation of backups, including compression and versioning.
-- `generate_report.py`: Generates reports based on system logs and monitoring data.
-- `run.sh`: Shell script to run the main Python script, ensuring the right Python interpreter is used.
+- `run.sh`: A shell script to manage the execution of Python scripts for system monitoring and backups. It includes options for starting, stopping, and managing processes in the background.
+- `process_backup.py`: Python script for automating system backups with options for scheduling and managing backup frequency.
+- `monitor_system.py`: Python script to monitor system performance, capable of running as a background service.
+- `main.py`: Main entry point for the system tools, interfacing with other scripts and handling command-line arguments for system monitoring and backups.
+- `generate_report.py`: Script for generating reports based on system performance data collected by `monitor_system.py`.
 
 ## Features
 
