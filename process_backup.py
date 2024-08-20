@@ -49,5 +49,18 @@ def backup_system(backup_path, log_file):
             log.write("----------------------------------------------------\n")
         sys.exit(1)
 
-# Execute the backup
-backup_system(BACKUP_PATH, LOG_FILE)
+def main():
+    # Ensure an argument is provided
+    if len(sys.argv) < 2:
+        print("Error: No backup path provided. Please specify the backup directory path as an argument.")
+        sys.exit(1)
+
+    # Variables
+    BACKUP_PATH = sys.argv[1]  # Pass the backup directory path as an argument
+    LOG_FILE = os.path.expanduser("~/Desktop/python_project1/system_logs/system_monitor.log")
+
+    # Execute the backup
+    backup_system(BACKUP_PATH, LOG_FILE)
+
+if __name__ == "__main__":
+    main()

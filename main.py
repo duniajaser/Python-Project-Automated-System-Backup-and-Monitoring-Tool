@@ -9,20 +9,23 @@ from crontab import CronTab
 from apscheduler.schedulers.blocking import BlockingScheduler
 from monitor_system import check_system
 from generate_report import generate_report
+from process_backup import backup_system
 
 #--------------------------------------------------------------------------------------------------------------------------
 
-def get_full_path(relative_path):
-    """ Convert a relative path to a full path using the user's home directory. """
-    home_dir = os.path.expanduser('~')
-    return os.path.join(home_dir, relative_path)
+def get_full_path(base_dir, relative_path):
+    """ Convert a relative path to a full path using a base directory. """
+    return os.path.join(base_dir, relative_path)
 
-# Define paths explicitly
-LOG_FILE = get_full_path("Desktop/python_project1/system_logs/system_monitor.log")
-PERFORMANCE_FILE=get_full_path("Desktop/python_project1/system_logs/system_performance.log")
-MONITOR_SCRIPT=get_full_path("Desktop/python_project1/monitor_system.py")
-REPORT_SCRIPT=get_full_path("Desktop/python_project1/generate_report.py")
-BACKUP_SCRIPT=get_full_path("Desktop/python_project1/process_backup.py")
+# Get the base directory dynamically
+BASE_DIR = os.path.join(os.path.expanduser('~'), "Desktop/python_project1")
+
+# Define paths using the base directory
+LOG_FILE = get_full_path(BASE_DIR, "system_logs/system_monitor.log")
+PERFORMANCE_FILE = get_full_path(BASE_DIR, "system_logs/system_performance.log")
+MONITOR_SCRIPT = get_full_path(BASE_DIR, "monitor_system.py")
+REPORT_SCRIPT = get_full_path(BASE_DIR, "generate_report.py")
+BACKUP_SCRIPT = get_full_path(BASE_DIR, "process_backup.py")
 
 #--------------------------------------------------------------------------------------------------------------------------
 
@@ -132,21 +135,7 @@ def start_monitoring(args):
 def unschedule_backup(path):
     """Unschedule the backup for the given path."""
     validate_path(path)
-    cron = CronTab(user=True)  # Load the current user's crontab
-    job_marker = path
-
-    # Iterate through cron jobs and remove those containing the job marker
-    jobs_removed = 0
-    for job in cron:
-        if job_marker in job.command:
-            cron.remove(job)
-            jobs_removed += 1
-
-    if jobs_removed > 0:
-        cron.write()
-        print(f"Removed {jobs_removed} scheduled backups for {path}.")
-    else:
-        print(f"No scheduled backup found for {path}.")
+    
 
 #--------------------------------------------------------------------------------------------------------------------------
 
@@ -155,8 +144,14 @@ def schedule_backup(args):
     backup_path = args.p
     validate_path(backup_path)  # Ensure the backup path exists
 
+    scheduler = BlockingScheduler()
+    
     # Handle 'periodic' backup type
     if args.backup == 'periodic':
+        if not args.t:
+            print("Error: periodic hour number must be provided.")
+            sys.exit(1)
+
         if args.d:
             start_date = validate_date(args.d)
         else:
@@ -165,32 +160,17 @@ def schedule_backup(args):
         if args.e:
             end_date = validate_date(args.e)
         else:
-            end_date = None  # No end date
+            end_date = None  
         
         if end_date and start_date >= end_date:
             print("Error: End date must be after the start date.")
             sys.exit(1)
 
-        # Schedule periodic backup
-        print(f"Scheduling {args.backup} backup every {args.t} hours at {backup_path}")
-        if args.d:
-            # If start date is provided, use 'at' to schedule cron job
-            formatted_start_date = start_date.strftime('%Y%m%d%H%M')
-            cron_command = f"*/{args.t} * * * * /usr/bin/python3 {BACKUP_SCRIPT} {backup_path}"
-            at_time = start_date.strftime('%H:%M %m/%d/%Y')
-            subprocess.run(f'echo "{cron_command}" | at -t {formatted_start_date}', shell=True, stderr=subprocess.DEVNULL)
-            print(f"Backup scheduled to start at {args.d} and repeat every {args.t} hours.")
-        else:
-            # Immediate scheduling
-            cron_command = f"*/{args.t} * * * * /usr/bin/python3 {BACKUP_SCRIPT} {backup_path}"
-            subprocess.run(f'(crontab -l 2>/dev/null; echo "{cron_command}") | crontab -', shell=True)
-            print(f"Backup started immediately, repeating every {args.t} hours.")
-        
+        # Schedule the backup with APScheduler
+        scheduler.add_job(lambda: backup_system(backup_path, LOG_FILE), 'interval', hours=int(args.t), start_date=start_date, end_date=end_date)
+        print(f"Backup scheduled to start at {start_date} and repeat every {args.t} hours.")
         if end_date:
-            formatted_end_date = end_date.strftime('%Y%m%d%H%M')
-            remove_command = f'crontab -l | grep -v "{cron_command}" | crontab -'
-            subprocess.run(f'echo "{remove_command}" | at -t {formatted_end_date}', shell=True, stderr=subprocess.DEVNULL)
-            print(f"Backup will end at {args.e}.")
+            print(f"Backup will end at {end_date}.")
 
     # Handle 'frequency' backup type
     elif args.backup == 'frequency':
@@ -198,7 +178,11 @@ def schedule_backup(args):
             print("Error: End date, and number of executions must be provided for frequency type backup.")
             sys.exit(1)
 
-        start_date = validate_date(args.d)
+        if args.d:
+            start_date = validate_date(args.d)
+        else:
+            start_date = datetime.now()  # Default to current time if no start date is provided
+        
         end_date = validate_date(args.e)
         if end_date <= start_date:
             print("Error: End date must be after the start date.")
@@ -209,24 +193,19 @@ def schedule_backup(args):
         interval_minutes = max(1, int(total_duration * 60 / (args.t - 1)))  # Ensure at least 1 minute
         formatted_interval = format_time(interval_minutes)
 
-        # Prepare the cron job command
-        cron_command = f"*/{interval_minutes} * * * * /usr/bin/python3 {BACKUP_SCRIPT} {args.p}"
+        # Schedule the backup with APScheduler
+        scheduler.add_job(lambda: backup_system(backup_path, LOG_FILE), 'interval', minutes=interval_minutes, start_date=start_date, end_date=end_date)
+        print(f"Backup scheduled to run {args.t} times every {formatted_interval} from {start_date} to {end_date}.")
 
-        if args.d:
-            # Schedule the cron job to start at the start date using 'at'
-            formatted_start_date = start_date.strftime('%Y%m%d%H%M')
-            subprocess.run(f'echo "{cron_command}" | at -t {formatted_start_date} 2>/dev/null', shell=True, check=True)
-            print(f"Backup scheduled to start at {args.d} and run every {formatted_interval}.")
-        else:
-            # Immediate scheduling
-            subprocess.run(f'(crontab -l 2>/dev/null; echo "{cron_command}") | crontab -', shell=True)
-            print(f"Backup started immediately, running every {formatted_interval}.")
+    try:
+        scheduler.start()
+    except (KeyboardInterrupt, SystemExit):
+        print("Monitoring interrupted by user.")
+    finally:
+        scheduler.shutdown()
+        print("Monitoring stopped.")
 
-        # Schedule the removal of the cron job at the end date
-        end_at_time = end_date.strftime('%H:%M %m/%d/%Y')
-        remove_command = f'crontab -l | grep -v "{cron_command}" | crontab -'
-        subprocess.run(f'echo "{remove_command}" | at {end_at_time} 2>/dev/null', shell=True, check=True)
-        print(f"Backup will end at {end_date}.")
+
 
 #--------------------------------------------------------------------------------------------------------------------------
 
@@ -247,16 +226,7 @@ def perform_backup(path):
     """Perform immediate backup to the specified path."""
     validate_path(path)  
     print(f"Performing immediate backup at: {path}")
-
-    backup_filename = os.path.join(path, f"backup_{datetime.now().strftime('%Y%m%d%H%M%S')}.tar.gz")
-    backup_command = ['tar', '-czf', backup_filename, path]
-
-    try:
-        # Execute the backup command
-        subprocess.run(backup_command, check=True)
-        print(f"Backup successful: {backup_filename}")
-    except subprocess.CalledProcessError as e:
-        print(f"Backup failed: {e}")
+    backup_system(path, LOG_FILE)
 
 #--------------------------------------------------------------------------------------------------------------------------
 
@@ -265,6 +235,7 @@ def main():
     if len(sys.argv) == 1:  # No arguments provided
         parser.print_help()
         sys.exit(1)
+
     # Validate path if any operation that requires a path is requested
     if any(getattr(args, opt, None) for opt in ['p', 'u', 'j', 'b']):
         if hasattr(args, 'p') and args.p:
@@ -282,7 +253,7 @@ def main():
         generate_report()
 
     if getattr(args, 'unschedule', None):
-        unschedule_backup(args.unschedule)
+        """the unscheduling   operation is already stopped from the run.sh script."""
 
     if getattr(args, 'backup_now', None):
         perform_backup(args.backup_now)
@@ -291,10 +262,9 @@ def main():
         schedule_backup(args)
 
     if getattr(args, 'stop_monitoring', False):
-        """the system monitoring reporting operation is alread stopped from the run.sh script."""
+        """the system monitoring reporting operation is already stopped from the run.sh script."""
 
     if getattr(args, 'start_monitoring', None):
-        # done
         start_monitoring(args)
 
     sys.exit(0)
